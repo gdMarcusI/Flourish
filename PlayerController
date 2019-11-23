@@ -1,0 +1,538 @@
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.SceneManagement;
+using System;
+
+public class PlayerController : MonoBehaviour {
+
+    //Health and hurt state
+    public float hurtTimer;
+    public bool isHurt;
+    private HealthPoints gManager;
+
+    //Movement 
+    public float moveSpeed;
+    public float runSpeed;
+    public float jumpHeight;
+    public float bounceHeight;
+    public float sproutPower;
+    private bool facingRight;
+    public float faceX;
+    public bool isIdle = true;
+
+    //Double click 
+    public bool one_click = false;
+    public bool tapped;
+    public bool doubleTapped;
+    public int tapCount = 0;
+    public int maxCount = 2;
+    public float axisTapTimer;
+    public float tapAalrm;
+    //private bool timer_running;
+    public float timer_for_double_click;
+    public float delay = .3f;
+
+    //Animation
+    private Animator p_anim;
+
+    //Ground collisions
+    public Transform groundCheck;
+    public float groundCheckRadius;
+    public LayerMask whatIsGround;
+    public bool isGrounded;
+    public bool touchingGround;
+
+    //Sprout bounce bool this is to regulate how much it adds to the players height so its not additive
+    public bool hasBounced;
+
+    //Ground raycasts
+    private RaycastHit2D groundHitOne;
+    private RaycastHit2D groundHitTwo;
+    private RaycastHit2D groundHitThree;
+
+    //Jump smoothing stuff
+    private bool jumping;
+    public bool canJump;
+
+
+    public CircleCollider2D playerHurtbox;
+
+    //enemy killing stuff
+    private bool hasHitBoss;
+    private bool hasHit;
+    public float hitTimer = .5f;
+    public float bossHitTimer = 1f;
+
+    //Physics Stuff
+    public Vector3 playerVelocity;
+    public float gravity;
+    public float acceleration;
+    public float deceleration;
+    public float moveX;
+    public float accSpeed;
+
+    //Private physics
+    private Rigidbody2D rBody;
+    private RaycastHit2D enemyHit;
+    private RaycastHit2D enemyHitTwo;
+    private RaycastHit2D enemyHitThree;
+    private RaycastHit2D sproutHit;
+
+    // Use this for initialization
+    void Start() {
+        rBody = GetComponent<Rigidbody2D>();
+        p_anim = GetComponent<Animator>();
+        gManager = GameObject.Find("GameManager").GetComponent<HealthPoints>();
+
+        //facing directions stuff
+        faceX = 1.5f;
+        facingRight = true;
+    }
+
+    // Update is called once per frame
+    void Update() {
+
+        //Times and resets the hurt state. I have no current way to compartmentalize this but the goal is to reduce the places code related need to be seperated.
+        if (hurtTimer > 0)
+        {
+            hurtTimer -= Time.deltaTime;
+        } else if (hurtTimer <= 0)
+        {
+            hurtTimer = 0.00f;
+            isHurt = false;
+        }
+
+        if (isHurt == true && hurtTimer <= 1f)
+        {
+            p_anim.Play("player_iframes");
+        }
+    }
+
+    private void FixedUpdate()
+    {
+        //Movement funtions
+        PlayerRaycast();
+        Move();
+        Flip();
+
+        //ApplyGravity();
+    }
+
+    private void Move()
+    {
+        DpadTap();
+        Jump();
+        moveX = Mathf.Round(Input.GetAxisRaw("Horizontal")) * acceleration;
+
+        //Checking for a double click for running
+        if (Input.GetButtonDown("Horizontal"))
+        {
+            if (!one_click)
+            {
+                one_click = true;
+
+                timer_for_double_click = Time.time;
+            }
+            else
+            {
+                moveSpeed = runSpeed;
+            }
+        }
+
+        //Reset clicks
+        if (one_click)
+        {
+            if ((Time.time - timer_for_double_click) > delay)
+            {
+                //basically if thats true its been too long and we want to reset so the next click is simply a single click and not a double click.
+                one_click = false;
+            }
+        }
+
+        //Playing walking animation, gotta check if we're in the hust state before we play it
+        if (!isHurt && touchingGround && Input.GetAxisRaw("Horizontal") > 0 || !isHurt && touchingGround && Input.GetAxisRaw("Horizontal") < 0)
+        {
+            isIdle = false;
+            p_anim.Play("player_walk");
+        } else if (!isHurt)
+        {
+            isIdle = true;
+        }
+
+        //Moving left and right
+        if (/*right ||*/ Input.GetAxisRaw("Horizontal") > 0)
+        {
+
+            accSpeed += moveX;
+            playerVelocity.x += accSpeed * Time.deltaTime; //new Vector3(accSpeed * Time.deltaTime, 0, 0);
+        }
+        else if (/*left ||*/ Input.GetAxisRaw("Horizontal") < 0)
+        {
+            accSpeed += moveX;
+            playerVelocity.x += accSpeed * Time.deltaTime;  //new Vector3(accSpeed * Time.deltaTime, 0, 0);
+        }
+        else if (Input.GetAxisRaw("Horizontal") == 0) //used to say (!left || !right)
+        {
+            //Slowliy deccelerating to a stop
+            if (playerVelocity.x != 0)
+            {
+                if (playerVelocity.x > 0)
+                {
+                    playerVelocity.x -= deceleration * Time.deltaTime;
+                }
+                else if (playerVelocity.x < 0)
+                {
+                    playerVelocity.x += deceleration * Time.deltaTime;
+                }
+
+                //Bring the decimal remainder to 0.00 so we actaully come to a full stop
+                if (playerVelocity.x <= -0.08f || playerVelocity.x >= 0.08f)
+                {
+                    accSpeed = 0f;
+                    moveSpeed = 3.5f;
+                }
+                else
+                {
+                    playerVelocity.x = 0f;
+                    moveSpeed = 3.5f;
+                }
+            }
+        }
+
+        //Capping our speed to out max speed as we add to the playerVelocity
+        if (accSpeed > moveSpeed)
+        {
+            //Check for ground to go normal speed
+            if (touchingGround)
+            {
+                accSpeed = moveSpeed / 2;
+                playerVelocity.x = moveSpeed;
+            }
+            else //Reduce speed in the air
+            {
+                accSpeed = moveSpeed / 2;
+                playerVelocity.x = moveSpeed / 1.5f;
+            }
+        }
+        else if (accSpeed < -moveSpeed)
+        {
+            //Check for ground to go normal speed
+            //There may be an issue with this math
+            if (touchingGround)
+            {
+                accSpeed = -moveSpeed / 2;
+                playerVelocity.x = -moveSpeed;
+            }
+            else //Reduce speed in the air
+            {
+                accSpeed = -moveSpeed / 2;
+                playerVelocity.x = -moveSpeed / 1.5f;
+            }
+        }
+
+        //Changing position
+        
+        rBody.MovePosition(transform.position + playerVelocity * Time.deltaTime);
+
+        //Go back to idling
+        if (isIdle && !isHurt)
+        {
+            p_anim.Play("Idle");
+        }
+    }
+
+    private void Flip()
+    {
+        if (moveX > 0)
+        {
+            faceX = 1.5f;
+            facingRight = true;
+        } else if (moveX < 0)
+        {
+            faceX = -1.5f;
+            facingRight = false;
+        }
+
+        Vector2 facingDir = new Vector2(faceX, transform.localScale.y);
+
+        transform.localScale = facingDir;
+    }
+
+    void PlayerRaycast()
+    {
+        //Sprout bounce 
+        LayerMask sproutLayer = LayerMask.GetMask("Sprout");
+        sproutHit = Physics2D.Raycast(transform.position, Vector2.down, .8f, sproutLayer);
+
+        if (sproutHit != false)
+        {
+            if (sproutHit.collider.tag == "Sprout")
+            {
+                hasBounced = true;
+            }
+        }
+
+        //Landing on the top of an enemy
+        //Added more rays to match the actual shape of the player since people were having trouble before
+        LayerMask enemyLayer = LayerMask.GetMask("Enemy");
+        enemyHit = Physics2D.Raycast(transform.position, Vector2.down, .8f,  enemyLayer);
+        enemyHitTwo = Physics2D.Raycast(new Vector2(transform.position.x - .5f, transform.position.y), Vector2.down, .8f, enemyLayer);
+        enemyHitThree = Physics2D.Raycast(new Vector2(transform.position.x + .5f, transform.position.y), Vector2.down, .8f, enemyLayer);
+
+        //Loop through and check the rays 
+        //Might need to fix later, not sure if this is consistent
+        #region Enemy Collision
+        if (!hasHit)
+        {
+            //Checking for normal enemy hitboxes
+            if (enemyHit != false && enemyHit.collider.tag == "Enemy")
+            {
+                playerVelocity.y = 0;
+                Debug.Log("Enemy hit!");
+                enemyHit.collider.GetComponentInParent<EnemyBase>().TakeDamage(1);
+                hasHit = true;
+            } else if (enemyHitTwo != false && enemyHitTwo.collider.tag == "Enemy")
+            {
+                playerVelocity.y = 0;
+                Debug.Log("Enemy hit!");
+                enemyHitTwo.collider.GetComponentInParent<EnemyBase>().TakeDamage(1);
+                hasHit = true;
+            }
+            else if (enemyHitThree != false && enemyHitThree.collider.tag == "Enemy")
+            {
+                playerVelocity.y = 0;
+                Debug.Log("Enemy hit!");
+                enemyHitThree.collider.GetComponentInParent<EnemyBase>().TakeDamage(1);
+                hasHit = true;
+            }
+            #endregion
+
+        //Checking for boss hitboxes
+        #region Boss Collsion
+            if (enemyHit != false && enemyHit.collider.tag == "Boss")
+            {
+                playerVelocity.y = 0;
+                Debug.Log("Boss hit!");
+                enemyHit.collider.GetComponentInParent<BossOne>().TakeDamage(1);
+                hasHit = true;
+            }
+            else if (enemyHitTwo != false && enemyHitTwo.collider.tag == "Boss")
+            {
+                playerVelocity.y = 0;
+                Debug.Log("Boss hit!");
+                enemyHitTwo.collider.GetComponentInParent<BossOne>().TakeDamage(1);
+                hasHit = true;
+            }
+            else if (enemyHitThree != false && enemyHitThree.collider.tag == "Boss")
+            {
+                playerVelocity.y = 0;
+                Debug.Log("Boss hit!");
+                enemyHitThree.collider.GetComponentInParent<BossOne>().TakeDamage(1);
+                hasHit = true;
+            }
+            #endregion
+
+        }
+
+        //Ground raycast stuff. Still an issue getting stuck on corners. Probably need 3 along the bottom of the player to improve/fix
+        LayerMask groundLayer = LayerMask.GetMask("Ground");
+        groundHitOne = Physics2D.Raycast(new Vector2(transform.position.x, transform.position.y - .5f), Vector2.down, .3f, groundLayer);
+        groundHitTwo = Physics2D.Raycast(new Vector2(transform.position.x - .4f, transform.position.y - .5f), Vector2.down, .3f, groundLayer);
+        groundHitThree = Physics2D.Raycast(new Vector2(transform.position.x + .4f, transform.position.y - .5f), Vector2.down, .3f, groundLayer);
+        Debug.DrawRay(new Vector2(transform.position.x, transform.position.y - .5f), Vector2.down * 1f, Color.green);
+        Debug.DrawRay(new Vector2(transform.position.x - .4f, transform.position.y - .5f), Vector2.down * 1f, Color.green);
+        Debug.DrawRay(new Vector2(transform.position.x + .4f, transform.position.y - .5f), Vector2.down * 1f, Color.green);
+      
+        if (groundHitOne != false && groundHitOne.distance < .3)
+        {
+            touchingGround = true;
+        }
+        else if (groundHitTwo != false && groundHitOne.distance < .4)
+        {
+            touchingGround = true;
+        }
+        else if (groundHitThree != false && groundHitOne.distance < .4)
+        {
+            touchingGround = true;
+        }
+        else if (!groundHitOne && !groundHitTwo && !groundHitThree)
+        {
+            touchingGround = false;
+        }
+
+        canJump = Physics2D.OverlapCircle(groundCheck.position, groundCheckRadius, whatIsGround);
+
+        //jumpCheckOne = Physics2D.Raycast(new Vector2(transform.position.x, transform.position.y - .5f), Vector2.down, .6f, groundLayer);
+
+        /*if (jumpCheckOne != false)
+        {
+            canJump = true;
+        }
+        else
+        {
+            canJump = false;
+        }*/
+    }
+
+    private void ApplyGravity()
+    {
+        if (!touchingGround && !hasHit)
+        {
+            playerVelocity.y -= gravity * Time.deltaTime; //new Vector3(0, gravity * Time.deltaTime, 0);
+        }
+        else if (touchingGround || hasHit)
+        {
+            playerVelocity.y = 0f;
+        }
+    }
+
+    void Jump()
+    {
+        if (canJump)
+        {
+            if (!jumping)
+            {
+                if (Input.GetButton("Jump"))
+                {
+                    playerVelocity.y = 0.0000000000000000f;
+                    jumping = true;
+                    canJump = false;
+                    playerVelocity.y += jumpHeight * Time.deltaTime; // new Vector3(0, jumpHeight * Time.deltaTime, 0);
+                    touchingGround = false;
+                }
+            }
+        }
+
+        if (Input.GetButtonUp("Jump"))
+        {
+            playerVelocity.y = 0.0000000000000000f;
+            jumping = false;
+        }
+
+        //Enemy bounce stuff? pretty sure
+        if (hasHit)
+        {
+            playerVelocity.y += bounceHeight * Time.deltaTime; //new Vector3(0, bounceHeight * Time.deltaTime, 0);
+            hitTimer -= Time.deltaTime;
+            if(hitTimer <= 0)
+            {
+                hasHit = false;
+            }
+        }
+
+        if (hasBounced)
+        {
+            playerVelocity.y = 0.0000000000000000f;
+            hasBounced = false;
+            playerVelocity.y += sproutPower * Time.deltaTime; // new Vector3(0, sproutPower * Time.deltaTime, 0);
+        }
+
+        ApplyGravity();
+    }
+
+    private void OnTriggerEnter2D(Collider2D collision)
+    {
+        //Stoping X velocity when colliding with a wall
+        if (collision.gameObject.tag == "Ground")
+        {
+            playerVelocity.x = 0.0000000000000000f;
+        }
+
+        //Triggering hurtstate
+        EnemyBase enemy = collision.gameObject.GetComponent<EnemyBase>();
+        if (enemy)
+        {
+            if (playerHurtbox && !isHurt)
+            {
+                HurtState();
+            }
+        }
+
+        //Triggering hurtstate
+        BossOne boss = collision.gameObject.GetComponent<BossOne>();
+        if (boss)
+        {
+            if (playerHurtbox && !isHurt)
+            {
+                HurtState();
+            }
+        }
+
+        //Taking damage from enemy Projectiles
+        if (collision.gameObject.tag == "EnemyProjectile")
+        {
+            if (playerHurtbox && !isHurt)
+            {
+                HurtState();
+            }
+        }
+
+        //Picking up/Interacting with items
+        Interactable interact = collision.gameObject.GetComponent<Interactable>();
+        if (interact != null)
+        {
+            interact.Interact();
+        }
+    }
+
+    //Player invulnerable state and taking damage
+    private void HurtState()
+    {
+        if (!isHurt)
+        {
+            isHurt = true;
+            p_anim.Play("player_hurt");
+            gManager.GetHealthPoints(1);
+            hurtTimer = 1.5f;
+            //hurtTimer -= Time.deltaTime; Outdated
+        }
+        
+        //Wanted this to be here to make this code more compact but it doesnt seem to trigger false here like I need
+        /* else if (isHurt && hurtTimer <= 0.00000000f)
+        {
+            isHurt = false;
+        }*/
+    }
+
+    private void DpadTap()
+    {
+        if (Input.GetAxisRaw("Horizontal") != 0)
+        {
+            if (!tapped)
+            {
+                axisTapTimer = Time.deltaTime;
+                tapped = true;
+                tapCount++;
+                tapAalrm = .3f;
+
+                if(tapCount == 1) { Debug.Log("One tap!"); }
+            }          
+        } else
+        {
+            if (tapped)
+            {
+                tapCount++;
+            }
+        }
+
+        if (tapCount >= maxCount)
+        {
+            tapCount = maxCount;
+            moveSpeed = runSpeed;
+
+            if (tapCount == 2) { Debug.Log("Two tap!"); }
+        }
+
+        if (Input.GetAxisRaw("Horizontal") == 0 && tapAalrm > 0)
+        {
+            tapAalrm -= Time.deltaTime;
+        }
+
+        if (tapAalrm <= 0)
+        {
+            tapped = false;
+            tapCount = 0;
+        }
+    }
+}
