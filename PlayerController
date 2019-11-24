@@ -40,7 +40,6 @@ public class PlayerController : MonoBehaviour {
     public Transform groundCheck;
     public float groundCheckRadius;
     public LayerMask whatIsGround;
-    public bool isGrounded;
     public bool touchingGround;
 
     //Sprout bounce bool this is to regulate how much it adds to the players height so its not additive
@@ -52,7 +51,7 @@ public class PlayerController : MonoBehaviour {
     private RaycastHit2D groundHitThree;
 
     //Jump smoothing stuff
-    private bool jumping;
+    public bool jumping;
     public bool canJump;
 
 
@@ -106,6 +105,13 @@ public class PlayerController : MonoBehaviour {
         if (isHurt == true && hurtTimer <= 1f)
         {
             p_anim.Play("player_iframes");
+        }
+
+        //Ending the jump
+        if (Input.GetButtonUp("Jump"))
+        {
+            playerVelocity.y = 0.0000000000000000f;
+            jumping = false;
         }
     }
 
@@ -165,12 +171,12 @@ public class PlayerController : MonoBehaviour {
         {
 
             accSpeed += moveX;
-            playerVelocity.x += accSpeed * Time.deltaTime; //new Vector3(accSpeed * Time.deltaTime, 0, 0);
+            playerVelocity.x += accSpeed * Time.deltaTime;
         }
         else if (/*left ||*/ Input.GetAxisRaw("Horizontal") < 0)
         {
             accSpeed += moveX;
-            playerVelocity.x += accSpeed * Time.deltaTime;  //new Vector3(accSpeed * Time.deltaTime, 0, 0);
+            playerVelocity.x += accSpeed * Time.deltaTime; 
         }
         else if (Input.GetAxisRaw("Horizontal") == 0) //used to say (!left || !right)
         {
@@ -379,11 +385,16 @@ public class PlayerController : MonoBehaviour {
     {
         if (!touchingGround && !hasHit)
         {
+            //Apply gravity
             playerVelocity.y -= gravity * Time.deltaTime; //new Vector3(0, gravity * Time.deltaTime, 0);
         }
         else if (touchingGround || hasHit)
         {
-            playerVelocity.y = 0f;
+            //If we're jumping off the ground we don't want to reset the y in player velocity so we'll check
+            if (!jumping)
+            {
+                playerVelocity.y = 0f;
+            }
         }
     }
 
@@ -395,19 +406,19 @@ public class PlayerController : MonoBehaviour {
             {
                 if (Input.GetButton("Jump"))
                 {
+                    //Reseting the y on player velocity and adding the new jumpheight
                     playerVelocity.y = 0.0000000000000000f;
-                    jumping = true;
-                    canJump = false;
                     playerVelocity.y += jumpHeight * Time.deltaTime; // new Vector3(0, jumpHeight * Time.deltaTime, 0);
+
+                    //Applying the new player velocity to our position again
+                    rBody.MovePosition(transform.position + playerVelocity * Time.deltaTime);
+
+                    //Bools
                     touchingGround = false;
+                    canJump = false;
+                    jumping = true;
                 }
             }
-        }
-
-        if (Input.GetButtonUp("Jump"))
-        {
-            playerVelocity.y = 0.0000000000000000f;
-            jumping = false;
         }
 
         //Enemy bounce stuff? pretty sure
@@ -421,6 +432,7 @@ public class PlayerController : MonoBehaviour {
             }
         }
 
+        //Boost jumping off sprout objects
         if (hasBounced)
         {
             playerVelocity.y = 0.0000000000000000f;
@@ -487,14 +499,9 @@ public class PlayerController : MonoBehaviour {
             hurtTimer = 1.5f;
             //hurtTimer -= Time.deltaTime; Outdated
         }
-        
-        //Wanted this to be here to make this code more compact but it doesnt seem to trigger false here like I need
-        /* else if (isHurt && hurtTimer <= 0.00000000f)
-        {
-            isHurt = false;
-        }*/
     }
 
+    //Running with the Dpad
     private void DpadTap()
     {
         if (Input.GetAxisRaw("Horizontal") != 0)
