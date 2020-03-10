@@ -1,27 +1,27 @@
-using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.SceneManagement;
-using System;
 
 public class PlayerController : MonoBehaviour {
 
     //Health and hurt state
+    private bool isInvincible;
     public float hurtTimer;
     public bool isHurt;
     private HealthPoints gManager;
 
     //Movement 
     public float moveSpeed;
+    public float airMoveSpeed;
     public float runSpeed;
     public float jumpHeight;
+    public float superJumpHeight;
     public float bounceHeight;
     public float sproutPower;
+    public float stompPower;
     private bool facingRight;
     public float faceX;
     public bool isIdle = true;
 
-    //Double click 
+    //Double click movement input
     public bool one_click = false;
     public bool tapped;
     public bool doubleTapped;
@@ -33,6 +33,20 @@ public class PlayerController : MonoBehaviour {
     public float timer_for_double_click;
     public float delay = .3f;
 
+    //Stomp stuff
+    public bool midAir;
+    public bool isStalling;
+    public bool isStomping;
+    public float stallTimer;
+    public float landingPower;
+    [SerializeField] private GameObject stompCollider;
+    [SerializeField] private GameObject superJumpHitBox;
+    [SerializeField] private CircleCollider2D superJumpCollider;
+    public bool hitSproutStomp;
+
+    //Player sprite renderer
+    public SpriteRenderer sRend;
+
     //Animation
     private Animator p_anim;
 
@@ -43,7 +57,7 @@ public class PlayerController : MonoBehaviour {
     public bool touchingGround;
 
     //Sprout bounce bool this is to regulate how much it adds to the players height so its not additive
-    public bool hasBounced;
+    public bool hasSproutBounced;
 
     //Ground raycasts
     private RaycastHit2D groundHitOne;
@@ -52,8 +66,10 @@ public class PlayerController : MonoBehaviour {
 
     //Jump smoothing stuff
     public bool jumping;
+    public bool superJumping;
     public bool canJump;
-
+    public float jumpTimer;
+    public float hangTimer;
 
     public CircleCollider2D playerHurtbox;
 
@@ -66,6 +82,7 @@ public class PlayerController : MonoBehaviour {
     //Physics Stuff
     public Vector3 playerVelocity;
     public float gravity;
+    public float gravityModifier;
     public float acceleration;
     public float deceleration;
     public float moveX;
@@ -82,6 +99,7 @@ public class PlayerController : MonoBehaviour {
     void Start() {
         rBody = GetComponent<Rigidbody2D>();
         p_anim = GetComponent<Animator>();
+        sRend = GetComponent<SpriteRenderer>();
         gManager = GameObject.Find("GameManager").GetComponent<HealthPoints>();
 
         //facing directions stuff
@@ -110,9 +128,15 @@ public class PlayerController : MonoBehaviour {
         //Ending the jump
         if (Input.GetButtonUp("Jump"))
         {
-            playerVelocity.y = 0.0000000000000000f;
-            jumping = false;
+            if (jumping)
+            {
+                jumping = false;
+
+                playerVelocity.y = playerVelocity.y / 2f;
+            }
         }
+
+        AirStall();
     }
 
     private void FixedUpdate()
@@ -121,43 +145,18 @@ public class PlayerController : MonoBehaviour {
         PlayerRaycast();
         Move();
         Flip();
-
-        //ApplyGravity();
     }
 
     private void Move()
     {
         DpadTap();
+        GroundStomp();
         Jump();
+        PlayerBounce();
         moveX = Mathf.Round(Input.GetAxisRaw("Horizontal")) * acceleration;
 
-        //Checking for a double click for running
-        if (Input.GetButtonDown("Horizontal"))
-        {
-            if (!one_click)
-            {
-                one_click = true;
-
-                timer_for_double_click = Time.time;
-            }
-            else
-            {
-                moveSpeed = runSpeed;
-            }
-        }
-
-        //Reset clicks
-        if (one_click)
-        {
-            if ((Time.time - timer_for_double_click) > delay)
-            {
-                //basically if thats true its been too long and we want to reset so the next click is simply a single click and not a double click.
-                one_click = false;
-            }
-        }
-
         //Playing walking animation, gotta check if we're in the hust state before we play it
-        if (!isHurt && touchingGround && Input.GetAxisRaw("Horizontal") > 0 || !isHurt && touchingGround && Input.GetAxisRaw("Horizontal") < 0)
+        if (!isStomping && !isStalling && !isHurt && touchingGround && Input.GetAxisRaw("Horizontal") > 0 || !isHurt && touchingGround && Input.GetAxisRaw("Horizontal") < 0)
         {
             isIdle = false;
             p_anim.Play("player_walk");
@@ -166,80 +165,81 @@ public class PlayerController : MonoBehaviour {
             isIdle = true;
         }
 
-        //Moving left and right
-        if (/*right ||*/ Input.GetAxisRaw("Horizontal") > 0)
+        if (!isStomping)
         {
+            //Moving left and right
+            if (/*right ||*/ Input.GetAxisRaw("Horizontal") > 0)
+            {
 
-            accSpeed += moveX;
-            playerVelocity.x += accSpeed * Time.deltaTime;
-        }
-        else if (/*left ||*/ Input.GetAxisRaw("Horizontal") < 0)
-        {
-            accSpeed += moveX;
-            playerVelocity.x += accSpeed * Time.deltaTime; 
-        }
-        else if (Input.GetAxisRaw("Horizontal") == 0) //used to say (!left || !right)
-        {
-            //Slowliy deccelerating to a stop
-            if (playerVelocity.x != 0)
+                accSpeed += moveX;
+                playerVelocity.x += accSpeed * Time.deltaTime;
+            }
+            else if (/*left ||*/ Input.GetAxisRaw("Horizontal") < 0)
             {
-                if (playerVelocity.x > 0)
+                accSpeed += moveX;
+                playerVelocity.x += accSpeed * Time.deltaTime;
+            }
+            else if (Input.GetAxisRaw("Horizontal") == 0) //used to say (!left || !right)
+            {
+                //Slowliy deccelerating to a stop
+                if (playerVelocity.x != 0)
                 {
-                    playerVelocity.x -= deceleration * Time.deltaTime;
-                }
-                else if (playerVelocity.x < 0)
-                {
-                    playerVelocity.x += deceleration * Time.deltaTime;
-                }
+                    if (playerVelocity.x > 0)
+                    {
+                        playerVelocity.x -= deceleration * Time.deltaTime;
+                    }
+                    else if (playerVelocity.x < 0)
+                    {
+                        playerVelocity.x += deceleration * Time.deltaTime;
+                    }
 
-                //Bring the decimal remainder to 0.00 so we actaully come to a full stop
-                if (playerVelocity.x <= -0.08f || playerVelocity.x >= 0.08f)
-                {
-                    accSpeed = 0f;
-                    moveSpeed = 3.5f;
+                    //Bring the decimal remainder to 0.00 so we actaully come to a full stop
+                    if (playerVelocity.x <= -0.08f || playerVelocity.x >= 0.08f)
+                    {
+                        accSpeed = 0f;
+                        moveSpeed = 3.5f;
+                    }
+                    else
+                    {
+                        playerVelocity.x = 0f;
+                        moveSpeed = 3.5f;
+                    }
                 }
-                else
+            }
+
+            //Capping our speed to out max speed as we add to the playerVelocity
+            if (accSpeed > moveSpeed)
+            {
+                //Check for ground to go normal speed
+                if (touchingGround)
                 {
-                    playerVelocity.x = 0f;
-                    moveSpeed = 3.5f;
+                    accSpeed = moveSpeed / 2;
+                    playerVelocity.x = moveSpeed;
+                }
+                else //Reduce speed in the air
+                {
+                    accSpeed = moveSpeed / 2;
+                    playerVelocity.x = airMoveSpeed;
+                }
+            }
+            else if (accSpeed < -moveSpeed)
+            {
+                //Check for ground to go normal speed
+                //There may be an issue with this math
+                if (touchingGround)
+                {
+                    accSpeed = -moveSpeed / 2;
+                    playerVelocity.x = -moveSpeed;
+                }
+                else //Reduce speed in the air
+                {
+                    accSpeed = -moveSpeed / 2;
+                    playerVelocity.x = -airMoveSpeed;
                 }
             }
         }
 
-        //Capping our speed to out max speed as we add to the playerVelocity
-        if (accSpeed > moveSpeed)
-        {
-            //Check for ground to go normal speed
-            if (touchingGround)
-            {
-                accSpeed = moveSpeed / 2;
-                playerVelocity.x = moveSpeed;
-            }
-            else //Reduce speed in the air
-            {
-                accSpeed = moveSpeed / 2;
-                playerVelocity.x = moveSpeed / 1.5f;
-            }
-        }
-        else if (accSpeed < -moveSpeed)
-        {
-            //Check for ground to go normal speed
-            //There may be an issue with this math
-            if (touchingGround)
-            {
-                accSpeed = -moveSpeed / 2;
-                playerVelocity.x = -moveSpeed;
-            }
-            else //Reduce speed in the air
-            {
-                accSpeed = -moveSpeed / 2;
-                playerVelocity.x = -moveSpeed / 1.5f;
-            }
-        }
-
-        //Changing position
-        
-        rBody.MovePosition(transform.position + playerVelocity * Time.deltaTime);
+        ApplyVelocity();
 
         //Go back to idling
         if (isIdle && !isHurt)
@@ -262,7 +262,10 @@ public class PlayerController : MonoBehaviour {
 
         Vector2 facingDir = new Vector2(faceX, transform.localScale.y);
 
-        transform.localScale = facingDir;
+        if (!isStomping && !isStalling)
+        {
+            transform.localScale = facingDir;
+        }
     }
 
     void PlayerRaycast()
@@ -275,7 +278,16 @@ public class PlayerController : MonoBehaviour {
         {
             if (sproutHit.collider.tag == "Sprout")
             {
-                hasBounced = true;
+                if (!isStomping)
+                {
+                    if (!superJumping)
+                    {
+                        hasSproutBounced = true;
+                    }
+                } else
+                {
+                    hitSproutStomp = true;
+                }
             }
         }
 
@@ -294,20 +306,20 @@ public class PlayerController : MonoBehaviour {
             //Checking for normal enemy hitboxes
             if (enemyHit != false && enemyHit.collider.tag == "Enemy")
             {
-                playerVelocity.y = 0;
+                ResetPlayerY();
                 Debug.Log("Enemy hit!");
                 enemyHit.collider.GetComponentInParent<EnemyBase>().TakeDamage(1);
                 hasHit = true;
             } else if (enemyHitTwo != false && enemyHitTwo.collider.tag == "Enemy")
             {
-                playerVelocity.y = 0;
+                ResetPlayerY();
                 Debug.Log("Enemy hit!");
                 enemyHitTwo.collider.GetComponentInParent<EnemyBase>().TakeDamage(1);
                 hasHit = true;
             }
             else if (enemyHitThree != false && enemyHitThree.collider.tag == "Enemy")
             {
-                playerVelocity.y = 0;
+                ResetPlayerY();
                 Debug.Log("Enemy hit!");
                 enemyHitThree.collider.GetComponentInParent<EnemyBase>().TakeDamage(1);
                 hasHit = true;
@@ -318,21 +330,21 @@ public class PlayerController : MonoBehaviour {
         #region Boss Collsion
             if (enemyHit != false && enemyHit.collider.tag == "Boss")
             {
-                playerVelocity.y = 0;
+                ResetPlayerY();
                 Debug.Log("Boss hit!");
                 enemyHit.collider.GetComponentInParent<BossOne>().TakeDamage(1);
                 hasHit = true;
             }
             else if (enemyHitTwo != false && enemyHitTwo.collider.tag == "Boss")
             {
-                playerVelocity.y = 0;
+                ResetPlayerY();
                 Debug.Log("Boss hit!");
                 enemyHitTwo.collider.GetComponentInParent<BossOne>().TakeDamage(1);
                 hasHit = true;
             }
             else if (enemyHitThree != false && enemyHitThree.collider.tag == "Boss")
             {
-                playerVelocity.y = 0;
+                ResetPlayerY();
                 Debug.Log("Boss hit!");
                 enemyHitThree.collider.GetComponentInParent<BossOne>().TakeDamage(1);
                 hasHit = true;
@@ -349,56 +361,79 @@ public class PlayerController : MonoBehaviour {
         Debug.DrawRay(new Vector2(transform.position.x, transform.position.y - .5f), Vector2.down * 1f, Color.green);
         Debug.DrawRay(new Vector2(transform.position.x - .4f, transform.position.y - .5f), Vector2.down * 1f, Color.green);
         Debug.DrawRay(new Vector2(transform.position.x + .4f, transform.position.y - .5f), Vector2.down * 1f, Color.green);
-      
-        if (groundHitOne != false && groundHitOne.distance < .3)
+        if (!jumping)
         {
-            touchingGround = true;
-        }
-        else if (groundHitTwo != false && groundHitOne.distance < .4)
-        {
-            touchingGround = true;
-        }
-        else if (groundHitThree != false && groundHitOne.distance < .4)
-        {
-            touchingGround = true;
-        }
-        else if (!groundHitOne && !groundHitTwo && !groundHitThree)
-        {
-            touchingGround = false;
+            if (groundHitOne != false && groundHitOne.distance < .3)
+            {
+                touchingGround = true;
+            }
+            else if (groundHitTwo != false && groundHitOne.distance < .4)
+            {
+                touchingGround = true;
+            }
+            else if (groundHitThree != false && groundHitOne.distance < .4)
+            {
+                touchingGround = true;
+            }
+            else if (!groundHitOne && !groundHitTwo && !groundHitThree)
+            {
+                touchingGround = false;
+            }
         }
 
         canJump = Physics2D.OverlapCircle(groundCheck.position, groundCheckRadius, whatIsGround);
+    }
 
-        //jumpCheckOne = Physics2D.Raycast(new Vector2(transform.position.x, transform.position.y - .5f), Vector2.down, .6f, groundLayer);
-
-        /*if (jumpCheckOne != false)
-        {
-            canJump = true;
-        }
-        else
-        {
-            canJump = false;
-        }*/
+    private void ApplyVelocity()
+    {
+        //Applying the new player velocity to our position again
+        rBody.MovePosition(transform.position + playerVelocity * Time.deltaTime);
     }
 
     private void ApplyGravity()
     {
-        if (!touchingGround && !hasHit)
+        if (!touchingGround && !hasHit && !isStalling && !isStomping)
         {
             //Apply gravity
-            playerVelocity.y -= gravity * Time.deltaTime; //new Vector3(0, gravity * Time.deltaTime, 0);
+            playerVelocity.y = playerVelocity.y + -gravity * Time.deltaTime;
         }
         else if (touchingGround || hasHit)
         {
-            //If we're jumping off the ground we don't want to reset the y in player velocity so we'll check
-            if (!jumping)
-            {
-                playerVelocity.y = 0f;
-            }
+           playerVelocity.y = 0f;
         }
     }
 
-    void Jump()
+    //Taking care of the "jumps" that aren't controlled by the player
+    private void PlayerBounce()
+    {
+        //Enemy bounce stuff? pretty sure
+        if (hasHit)
+        {
+            #region Ending Stomp
+            isStomping = false;
+            stompCollider.SetActive(false);
+            stallTimer = 0.1f;
+            sRend.color = Color.white;
+            #endregion
+
+            Bounce(bounceHeight);
+            hitTimer -= Time.deltaTime;
+            if (hitTimer <= 0)
+            {
+                hasHit = false;
+            }
+        }
+
+        //Boost jumping off sprout objects
+        if (hasSproutBounced)
+        {
+            ResetPlayerY();
+            hasSproutBounced = false;
+            Bounce(sproutPower);
+        }
+    }
+
+    private void Jump()
     {
         if (canJump)
         {
@@ -406,41 +441,37 @@ public class PlayerController : MonoBehaviour {
             {
                 if (Input.GetButton("Jump"))
                 {
-                    //Reseting the y on player velocity and adding the new jumpheight
-                    playerVelocity.y = 0.0000000000000000f;
-                    playerVelocity.y += jumpHeight * Time.deltaTime; // new Vector3(0, jumpHeight * Time.deltaTime, 0);
+                    ResetPlayerY();
+                    playerVelocity.y = playerVelocity.y + jumpHeight * Time.deltaTime;
 
-                    //Applying the new player velocity to our position again
-                    rBody.MovePosition(transform.position + playerVelocity * Time.deltaTime);
+                    ApplyVelocity();
 
-                    //Bools
-                    touchingGround = false;
+                    //bools
                     canJump = false;
                     jumping = true;
+                    touchingGround = false;
                 }
             }
         }
 
-        //Enemy bounce stuff? pretty sure
-        if (hasHit)
-        {
-            playerVelocity.y += bounceHeight * Time.deltaTime; //new Vector3(0, bounceHeight * Time.deltaTime, 0);
-            hitTimer -= Time.deltaTime;
-            if(hitTimer <= 0)
-            {
-                hasHit = false;
-            }
-        }
-
-        //Boost jumping off sprout objects
-        if (hasBounced)
-        {
-            playerVelocity.y = 0.0000000000000000f;
-            hasBounced = false;
-            playerVelocity.y += sproutPower * Time.deltaTime; // new Vector3(0, sproutPower * Time.deltaTime, 0);
-        }
-
         ApplyGravity();
+    }
+
+    //Function for any kind of jump that isn't controlled by the player
+    private void Bounce(float amount)
+    {
+        ResetPlayerY();
+        playerVelocity.y += amount * Time.deltaTime;
+    }
+
+    private void ResetPlayerY()
+    {
+        playerVelocity.y = 0.0000000000000000f;
+    }
+
+    private void ResetPlayerX()
+    {
+        playerVelocity.x = 0.0000000000000000f;
     }
 
     private void OnTriggerEnter2D(Collider2D collision)
@@ -448,35 +479,46 @@ public class PlayerController : MonoBehaviour {
         //Stoping X velocity when colliding with a wall
         if (collision.gameObject.tag == "Ground")
         {
-            playerVelocity.x = 0.0000000000000000f;
+            ResetPlayerX();
         }
 
-        //Triggering hurtstate
+        if (collision.gameObject.tag == "DeathZone")
+        {
+            gManager.GetHealthPoints(3);
+        }
+
         EnemyBase enemy = collision.gameObject.GetComponent<EnemyBase>();
-        if (enemy)
-        {
-            if (playerHurtbox && !isHurt)
-            {
-                HurtState();
-            }
-        }
 
-        //Triggering hurtstate
-        BossOne boss = collision.gameObject.GetComponent<BossOne>();
-        if (boss)
+        //Checking for invincibilty before taking damage
+        if (!isInvincible)
         {
-            if (playerHurtbox && !isHurt)
+            //Triggering hurtstate
+            //EnemyBase enemy = collision.gameObject.GetComponent<EnemyBase>();
+            if (enemy)
             {
-                HurtState();
+                if (playerHurtbox && !isHurt)
+                {
+                    HurtState();
+                }
             }
-        }
 
-        //Taking damage from enemy Projectiles
-        if (collision.gameObject.tag == "EnemyProjectile")
-        {
-            if (playerHurtbox && !isHurt)
+            //Triggering hurtstate
+            BossOne boss = collision.gameObject.GetComponent<BossOne>();
+            if (boss)
             {
-                HurtState();
+                if (playerHurtbox && !isHurt)
+                {
+                    HurtState();
+                }
+            }
+
+            //Taking damage from enemy Projectiles
+            if (collision.gameObject.tag == "EnemyProjectile")
+            {
+                if (playerHurtbox && !isHurt)
+                {
+                    HurtState();
+                }
             }
         }
 
@@ -485,6 +527,17 @@ public class PlayerController : MonoBehaviour {
         if (interact != null)
         {
             interact.Interact();
+        }
+
+        if (superJumping)
+        {
+            if (superJumpHitBox)
+            {
+                if (enemy)
+                {
+                    enemy.GetComponent<EnemyBase>().TakeDamage(1);
+                }
+            }
         }
     }
 
@@ -497,8 +550,7 @@ public class PlayerController : MonoBehaviour {
             p_anim.Play("player_hurt");
             gManager.GetHealthPoints(1);
             hurtTimer = 1.5f;
-            //hurtTimer -= Time.deltaTime; Outdated
-        }
+        }      
     }
 
     //Running with the Dpad
@@ -508,12 +560,12 @@ public class PlayerController : MonoBehaviour {
         {
             if (!tapped)
             {
-                axisTapTimer = Time.deltaTime;
+                //axisTapTimer = Time.deltaTime;
                 tapped = true;
                 tapCount++;
                 tapAalrm = .3f;
 
-                if(tapCount == 1) { Debug.Log("One tap!"); }
+                //if(tapCount == 1) { Debug.Log("One tap!"); }
             }          
         } else
         {
@@ -528,7 +580,7 @@ public class PlayerController : MonoBehaviour {
             tapCount = maxCount;
             moveSpeed = runSpeed;
 
-            if (tapCount == 2) { Debug.Log("Two tap!"); }
+            //if (tapCount == 2) { Debug.Log("Two tap!"); }
         }
 
         if (Input.GetAxisRaw("Horizontal") == 0 && tapAalrm > 0)
@@ -540,6 +592,84 @@ public class PlayerController : MonoBehaviour {
         {
             tapped = false;
             tapCount = 0;
+        }
+    }
+
+    private void AirStall()
+    {
+        if (!canJump)
+        {
+            if (Input.GetButtonDown("Stomp"))
+            {
+                if (!isStalling)
+                {
+                    ResetPlayerY();
+                    ResetPlayerX();
+                    isStalling = true;
+                }
+            }
+
+            if (isStalling)
+            {
+                stallTimer -= Time.deltaTime;
+            }
+
+            if (stallTimer <= 0)
+            {
+                stallTimer = 0.0000000000000000f;
+            }
+        }
+    }
+
+    private void GroundStomp()
+    {
+        if (stallTimer <= 0)
+        {
+            if (isStalling)
+            {
+                ResetPlayerX();
+                isStalling = false;
+                isStomping = true;
+                stompCollider.SetActive(true);
+                ResetPlayerY();
+                sRend.color = Color.red;
+                playerVelocity.y -= stompPower * Time.deltaTime;
+            }
+        }
+
+        if (isStomping)
+        {
+
+            if (hitSproutStomp)
+            {
+                hitSproutStomp = false;
+                isStomping = false;
+                superJumping = true;
+
+                ResetPlayerY();
+                playerVelocity.y = playerVelocity.y + superJumpHeight * Time.deltaTime;
+                ApplyVelocity();
+
+                sRend.color = Color.blue;
+            }
+
+            if (touchingGround)
+            {
+                isStomping = false;
+                stompCollider.SetActive(false);
+                stallTimer = 0.1f;
+                sRend.color = Color.white;
+            }
+        }
+
+        if (superJumping)
+        {
+            if (touchingGround)
+            {
+                superJumping = false;
+                stompCollider.SetActive(false);
+                sRend.color = Color.white;
+            }
         }
     }
 }
